@@ -1,11 +1,23 @@
 <?php
+header('Content-Type: application/json');
 $statusFile = "status.json";
-$isActive = isset($_GET['active']) && $_GET['active'] === '1' ? 1 : 0;
 
+$active = isset($_GET['active']) ? intval($_GET['active']) : 0;
+
+$data = ["bottles" => 0, "active" => false, "seconds" => 0, "metal_rejected" => 0];
 if (file_exists($statusFile)) {
-    $data = json_decode(file_get_contents($statusFile), true);
-    $data['active'] = $isActive;
-    file_put_contents($statusFile, json_encode($data));
+    $current = json_decode(file_get_contents($statusFile), true);
+    if (is_array($current)) {
+        $data = $current;
+    }
 }
-echo json_encode(["status" => "success", "active" => $isActive]);
+
+$data['active'] = ($active === 1);
+
+// Atomic save
+$tempFile = "status_temp.json";
+file_put_contents($tempFile, json_encode($data));
+rename($tempFile, $statusFile);
+
+echo json_encode(["success" => true, "active" => $data['active']]);
 ?>

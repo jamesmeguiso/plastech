@@ -14,16 +14,19 @@ PIN_FAN = 11        # Fan Relay Control Pin
 
 GPIO.setup(PIN_IR, GPIO.IN)
 GPIO.setup(PIN_IND, GPIO.IN)
-GPIO.setup(FAN_PIN, GPIO.OUT)
+GPIO.setup(PIN_FAN, GPIO.OUT)
 
 # Turn ON fan continuously
 GPIO.output(PIN_FAN, GPIO.HIGH)
 
 STATUS_FILE = "/var/www/html/plastech/status.json"
 
-# Cooldown tracking variable
-last_trigger_time = 0
-COOLDOWN_SECONDS = 1.5
+# Cooldown tracking variables
+last_ir_time = 0
+last_metal_time = 0
+
+IR_COOLDOWN = 2.0      # 2 seconds IR cooldown
+METAL_COOLDOWN = 3.0   # 3 seconds complete metal block window
 
 def calculate_minutes(bottles):
     if bottles <= 0: return 0
@@ -43,31 +46,40 @@ def calculate_minutes(bottles):
 
 def read_status():
     if not os.path.exists(STATUS_FILE):
-        return {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0}
+        return {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0, "client_ip": ""}
     try:
         with open(STATUS_FILE, "r") as f:
             data = json.load(f)
             if "metal_rejected" not in data:
                 data["metal_rejected"] = 0
+            if "client_ip" not in data:
+                data["client_ip"] = ""
             return data
     except Exception:
-        return {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0}
+        return {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0, "client_ip": ""}
 
 def write_status(data):
     try:
-        with open(STATUS_FILE, "w") as f:
+        temp_file = STATUS_FILE + ".tmp"
+        with open(temp_file, "w") as f:
             json.dump(data, f)
+        os.replace(temp_file, STATUS_FILE)
     except Exception:
         pass
 
+def grant_internet(ip):
+    if ip:
+        os.system(f"sudo iptables -I FORWARD 1 -s {ip} -j ACCEPT")
+        print(f"[UNLOCKED] Internet granted for IP: {ip}")
+
 print("========================================")
-print("   PLAS-TECH CONTROL SYSTEM RUNNING     ")
+print("    PLAS-TECH CONTROL SYSTEM RUNNING    ")
 print("========================================")
 
 # Initialize status file on boot
 current_data = read_status()
 if "bottles" not in current_data:
-    current_data = {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0}
+    current_data = {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0, "client_ip": ""}
     write_status(current_data)
 
 try:
@@ -81,30 +93,45 @@ try:
         # Read web status to check if insertion window is active
         status = read_status()
         is_active = status.get("active", False)
+        client_ip = status.get("client_ip", "")
 
         current_ir_state = GPIO.input(PIN_IR)
         current_time = time.time()
 
         # Only check items if the pop-up modal is open (active == true)
         if is_active:
-            # Check for transition on IR sensor AND ensure the 1.5-second cooldown has passed
-            if last_ir_state != current_ir_state and (current_time - last_trigger_time) > COOLDOWN_SECONDS:
-                # Give a tiny pause to let the metal sensor register if it's metallic
-                time.sleep(0.02)
-                metal_triggered = (GPIO.input(PIN_IND) == 0) # Assuming active low for inductive sensor
+            metal_triggered = (GPIO.input(PIN_IND) == 1)
 
-                if metal_triggered:
-                    # It's metal! Do NOT add a bottle. Track rejection instead.
+            if metal_triggered:
+                last_metal_time = current_time
+
+            # Check for transition on IR sensor
+            if last_ir_state != current_ir_state:
+                # Check if we are inside the 3-second block window after any metal detection
+                if (current_time - last_metal_time) < METAL_COOLDOWN:
+                    print(f"[BLOCKED] IR triggered within 3s metal block window. Web updated.")
                     status["metal_rejected"] = status.get("metal_rejected", 0) + 1
-                    print(f"[REJECTED] Metal object detected! Bottle count NOT increased.")
+                    write_status(status)
+                elif metal_triggered:
+                    # Metal is actively present right now
+                    status["metal_rejected"] = status.get("metal_rejected", 0) + 1
+                    write_status(status)
+                    print(f"[REJECTED] Metal object detected! Web updated.")
                 else:
-                    # It's plastic/valid! Add to bottle count.
-                    status["bottles"] = status.get("bottles", 0) + 1
-                    status["seconds"] = calculate_minutes(status["bottles"]) * 60
-                    print(f"[TRIGGERED] Plastic bottle detected! Total: {status['bottles']}")
-
-                write_status(status)
-                last_trigger_time = time.time() # Reset cooldown timestamp after a successful check
+                    # Check the normal 2-second IR cooldown
+                    if (current_time - last_ir_time) < IR_COOLDOWN:
+                        print(f"[IGNORED] IR cooldown active (2s).")
+                    else:
+                        # Valid plastic bottle!
+                        last_ir_time = current_time
+                        status["bottles"] = status.get("bottles", 0) + 1
+                        status["seconds"] = calculate_minutes(status["bottles"]) * 60
+                        write_status(status)
+                        print(f"[TRIGGERED] Plastic bottle detected! Total: {status['bottles']}")
+                        
+                        # Trigger network access unlock for the user's IP
+                        if client_ip:
+                            grant_internet(client_ip)
 
         last_ir_state = current_ir_state
         time.sleep(0.05)
