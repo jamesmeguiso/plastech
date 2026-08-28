@@ -1,6 +1,16 @@
 <?php
 header('Content-Type: application/json');
 
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+
+if (!isset($_SESSION['admin_logged_in']) || $_SESSION['admin_logged_in'] !== true) {
+    http_response_code(403);
+    echo json_encode(["status" => "error", "message" => "Unauthorized"]);
+    exit;
+}
+
 $ip = $_GET['ip'] ?? '';
 $auth = $_GET['auth'] ?? '0';
 

@@ -1,0 +1,5 @@
+status.json
+status_temp.json
+app.log
+__pycache__/
+*.pyc
