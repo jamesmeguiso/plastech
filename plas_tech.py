@@ -1,135 +1,128 @@
-Updated Plas_tech.py: Replace your entire Python script file with the code below so it properly targets the FORWARD chain when unblocking IPs:
-
-Python
 import time
 import os
 import json
 import OPi.GPIO as GPIO
 
-# Setup GPIO mode
 GPIO.setmode(GPIO.BOARD)
 GPIO.setwarnings(False)
 
-# Pin Definitions
-PIN_IR = 7          # IR Sensor Input
-PIN_IND = 15        # Metal Sensor Input (Inductive Proximity Sensor)
-PIN_FAN = 11        # Fan Relay Control Pin
+PIN_IR = 7
+PIN_IND = 15
+PIN_FAN = 11
 
 GPIO.setup(PIN_IR, GPIO.IN)
 GPIO.setup(PIN_IND, GPIO.IN)
 GPIO.setup(PIN_FAN, GPIO.OUT)
-
-# Turn ON fan continuously
 GPIO.output(PIN_FAN, GPIO.HIGH)
 
-STATUS_FILE = "/var/www/html/plastech/status.json"
+STATUS_DIR = "/var/www/html/plastech"
+STATUS_FILE = os.path.join(STATUS_DIR, "status.json")
 
-# Cooldown tracking variables
 last_ir_time = 0
 last_metal_time = 0
-
-IR_COOLDOWN = 2.0      # 2 seconds IR cooldown
-METAL_COOLDOWN = 3.0   # 3 seconds complete metal block window
+IR_COOLDOWN = 2.0
+METAL_COOLDOWN = 3.0
 
 def calculate_minutes(bottles):
     if bottles <= 0: return 0
     if bottles == 1: return 10
     if bottles == 2: return 20
     if bottles == 3: return 30
-    if bottles == 4: return 40
-    if bottles == 5: return 60    # 1 Hour
-    if bottles == 6: return 80    # 1 Hr 20 Mins
-    if bottles == 7: return 100   # 1 Hr 40 Mins
-    if bottles == 8: return 120   # 2 Hours
-    if bottles == 9: return 150   # 2 Hr 30 Mins
-    if bottles == 10: return 180  # 3 Hours
-    if bottles == 15: return 300  # 5 Hours
-    if bottles == 20: return 600  # 10 Hours
+    if bottles == 5: return 60
+    if bottles == 10: return 180
     return bottles * 10
 
 def read_status():
     if not os.path.exists(STATUS_FILE):
-        return {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0, "client_ip": ""}
+        return {}
     try:
         with open(STATUS_FILE, "r") as f:
             data = json.load(f)
-            if "metal_rejected" not in data:
-                data["metal_rejected"] = 0
-            if "client_ip" not in data:
-                data["client_ip"] = ""
-            return data
+            return data if isinstance(data, dict) else {}
     except Exception:
-        return {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0, "client_ip": ""}
+        return {}
 
 def write_status(data):
     try:
-        temp_file = STATUS_FILE + ".tmp"
-        with open(temp_file, "w") as f:
+        if not os.path.exists(STATUS_DIR):
+            os.makedirs(STATUS_DIR, exist_ok=True)
+
+        with open(STATUS_FILE, "w") as f:
             json.dump(data, f)
-        os.replace(temp_file, STATUS_FILE)
-    except Exception:
-        pass
+        os.chmod(STATUS_FILE, 0o777)
+    except Exception as e:
+        print(f"[ERROR] Could not write status: {e}")
 
 def grant_internet(ip):
     if ip:
-        os.system(f"sudo iptables -I FORWARD 1 -s {ip} -j ACCEPT")
-        print(f"[UNLOCKED] Internet granted for IP: {ip}")
+        check_cmd = f"sudo iptables -C FORWARD -i end0 -s {ip} -j ACCEPT 2>/dev/null"
+        if os.system(check_cmd) != 0:
+            os.system(f"sudo iptables -I FORWARD 1 -i end0 -s {ip} -j ACCEPT")
+            print(f"[UNLOCKED] Firewall opened for IP: {ip}")
+
+def revoke_internet(ip):
+    if ip:
+        while os.system(f"sudo iptables -D FORWARD -i end0 -s {ip} -j ACCEPT 2>/dev/null") == 0:
+            pass
+        print(f"[LOCKED] Firewall closed for IP: {ip}")
 
 print("========================================")
-print("    PLAS-TECH CONTROL SYSTEM RUNNING    ")
+print("    PLAS-TECH SENSOR SYSTEM RUNNING      ")
 print("========================================")
-
-# Initialize status file on boot
-current_data = read_status()
-if "bottles" not in current_data:
-    current_data = {"bottles": 0, "active": False, "seconds": 0, "metal_rejected": 0, "client_ip": ""}
-    write_status(current_data)
 
 try:
     last_ir_state = GPIO.input(PIN_IR)
-    print(f"[INFO] Initial IR Sensor State: {last_ir_state}")
+    counter = 0
 
     while True:
         GPIO.output(PIN_FAN, GPIO.HIGH)
-
-        status = read_status()
-        is_active = status.get("active", False)
-        client_ip = status.get("client_ip", "")
-
-        current_ir_state = GPIO.input(PIN_IR)
+        status_data = read_status()
         current_time = time.time()
+        current_ir_state = GPIO.input(PIN_IR)
 
-        if is_active:
+        counter += 1
+        if counter >= 20:
+            counter = 0
+            for ip, session_data in status_data.items():
+                if isinstance(session_data, dict):
+                    if session_data.get("seconds", 0) > 0:
+                        session_data["seconds"] -= 1
+                        grant_internet(ip)
+                        if session_data["seconds"] <= 0:
+                            session_data["seconds"] = 0
+                            revoke_internet(ip)
+                            print(f"[LOCKED] Time expired for IP {ip}")
+
+        active_ip = None
+        for ip, session_data in status_data.items():
+            if isinstance(session_data, dict) and session_data.get("active", False):
+                active_ip = ip
+                break
+
+        if active_ip:
             metal_triggered = (GPIO.input(PIN_IND) == 1)
-
             if metal_triggered:
                 last_metal_time = current_time
 
             if last_ir_state != current_ir_state:
                 if (current_time - last_metal_time) < METAL_COOLDOWN:
-                    print(f"[BLOCKED] IR triggered within 3s metal block window. Web updated.")
-                    status["metal_rejected"] = status.get("metal_rejected", 0) + 1
-                    write_status(status)
+                    if active_ip in status_data and isinstance(status_data[active_ip], dict):
+                        status_data[active_ip]["metal_rejected"] = status_data[active_ip].get("metal_rejected", 0) + 1
                 elif metal_triggered:
-                    status["metal_rejected"] = status.get("metal_rejected", 0) + 1
-                    write_status(status)
-                    print(f"[REJECTED] Metal object detected! Web updated.")
+                    if active_ip in status_data and isinstance(status_data[active_ip], dict):
+                        status_data[active_ip]["metal_rejected"] = status_data[active_ip].get("metal_rejected", 0) + 1
                 else:
-                    if (current_time - last_ir_time) < IR_COOLDOWN:
-                        print(f"[IGNORED] IR cooldown active (2s).")
-                    else:
+                    if (current_time - last_ir_time) >= IR_COOLDOWN:
                         last_ir_time = current_time
-                        status["bottles"] = status.get("bottles", 0) + 1
-                        status["seconds"] = calculate_minutes(status["bottles"]) * 60
-                        write_status(status)
-                        print(f"[TRIGGERED] Plastic bottle detected! Total: {status['bottles']}")
+                        if active_ip in status_data and isinstance(status_data[active_ip], dict):
+                            status_data[active_ip]["bottles"] = status_data[active_ip].get("bottles", 0) + 1
+                            status_data[active_ip]["seconds"] = calculate_minutes(status_data[active_ip]["bottles"]) * 60
+                            grant_internet(active_ip)
+                            print(f"[TRIGGERED] Bottle added for IP {active_ip}. Total: {status_data[active_ip]['bottles']}")
 
-                        if client_ip:
-                            grant_internet(client_ip)
-
+        write_status(status_data)
         last_ir_state = current_ir_state
         time.sleep(0.05)
 
 except KeyboardInterrupt:
-    print("\n[EXITING] Cleaning up GPIO...")
     GPIO.cleanup()

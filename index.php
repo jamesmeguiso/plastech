@@ -1,10 +1,12 @@
 <?php
 $statusFile = "status.json";
+$client_ip = $_SERVER['REMOTE_ADDR'] ?? '';
 $bottleCount = 0;
+
 if (file_exists($statusFile)) {
     $data = json_decode(file_get_contents($statusFile), true);
-    if (isset($data['bottles'])) {
-        $bottleCount = $data['bottles'];
+    if (is_array($data) && isset($data[$client_ip]) && isset($data[$client_ip]['bottles'])) {
+        $bottleCount = $data[$client_ip]['bottles'];
     }
 }
 ?>
@@ -91,7 +93,6 @@ if (file_exists($statusFile)) {
             </div>
             <button class="vende-btn btn-green" onclick="openInsertModal()">Insert Bottles Now</button>
             <button class="vende-btn btn-blue" onclick="openRatesModal()">View Rates</button>
-            <button class="vende-btn btn-red" onclick="alert('System Hardware: IR Sensor & Cooling Fan Operational.')">Machine Status</button>
         </div>
         <div class="tcc-footer">
             Talisay City College &copy; 2026<br>Plas-Tech Research Project<br>
@@ -141,12 +142,11 @@ if (file_exists($statusFile)) {
         <div class="modal-box" style="max-width: 360px;">
             <h3 style="margin-top: 0; color: #343a40;">⚙️ Admin Control Panel</h3>
             <div class="admin-stat-box">
-                <div><strong>Active Users Online:</strong> <span id="adminActiveUsers" style="color: #007bff;">1</span></div>
-                <div><strong>System Temperature:</strong> <span id="adminTemp" style="color: #28a745;">Loading...</span></div>
+                <div><strong>Your Session Status:</strong> <span id="adminActiveUsers" style="color: #007bff;">Loading...</span></div>
+                <div><strong>System Temperature:</strong> <span id="adminTemp" style="color: #28a745;">42.5 °C (Normal)</span></div>
                 <div><strong>Total Lifetime Bottles:</strong> <span id="adminTotalBottles">0</span></div>
             </div>
-            <button class="vende-btn btn-red" style="padding: 10px; font-size: 13px; margin-bottom: 8px;" onclick="resetAllUsersTime()">⚡ Reset All Users Time</button>
-            <button class="vende-btn btn-dark" style="padding: 8px; font-size: 12px; margin-bottom: 0;" onclick="closeAdminDashboard()">Logout / Close</button>
+            <button class="vende-btn btn-dark" style="padding: 8px; font-size: 12px; margin-bottom: 0;" onclick="closeAdminDashboard()">Close Panel</button>
         </div>
     </div>
 
@@ -164,10 +164,6 @@ if (file_exists($statusFile)) {
     }
 
     function updateInternetAccess(isAuthorized) {
-        let clientIp = "<?php echo $_SERVER['REMOTE_ADDR'] ?? ''; ?>";
-        if (!clientIp) return;
-
-        fetch('authorize_net.php?ip=' + clientIp + '&auth=' + (isAuthorized ? '1' : '0')).catch(e => {});
         let banner = document.getElementById('statusBanner');
         if (isAuthorized) {
             banner.className = "connection-status active";
@@ -179,27 +175,40 @@ if (file_exists($statusFile)) {
     }
 
     function openInsertModal() {
-        document.getElementById('insertModal').style.display = 'flex';
-        timeLeft = 60; 
-        document.getElementById('modalTimerDisplay').textContent = timeLeft + " SEC";
-        updateBackendState(true);
-
-        fetch('status.json?' + new Date().getTime())
+        fetch('update_active.php?active=1')
             .then(res => res.json())
-            .then(data => { lastKnownBottles = data.bottles || 0; }).catch(e => {});
+            .then(data => {
+                if (!data.success) {
+                    alert(data.message || "Slot is currently busy. Please wait for the other user to finish.");
+                    return;
+                }
+                document.getElementById('insertModal').style.display = 'flex';
+                timeLeft = 60; 
+                document.getElementById('modalTimerDisplay').textContent = timeLeft + " SEC";
 
-        clearInterval(modalInterval);
-        modalInterval = setInterval(() => {
-            timeLeft--;
-            document.getElementById('modalTimerDisplay').textContent = timeLeft + " SEC";
-            if (timeLeft <= 0) {
+                fetch('status.json?' + new Date().getTime())
+                    .then(res => res.json())
+                    .then(resData => {
+                        let clientIp = "<?php echo $client_ip; ?>";
+                        if (resData && resData[clientIp]) {
+                            lastKnownBottles = resData[clientIp].bottles || 0;
+                        }
+                    }).catch(e => {});
+
                 clearInterval(modalInterval);
-                closeInsertModal();
-            }
-        }, 1000);
+                modalInterval = setInterval(() => {
+                    timeLeft--;
+                    document.getElementById('modalTimerDisplay').textContent = timeLeft + " SEC";
+                    if (timeLeft <= 0) {
+                        clearInterval(modalInterval);
+                        closeInsertModal();
+                    }
+                }, 1000);
 
-        clearInterval(pollInterval);
-        pollInterval = setInterval(syncDatabaseStats, 1000);
+                clearInterval(pollInterval);
+                pollInterval = setInterval(syncDatabaseStats, 1000);
+            })
+            .catch(err => alert('Could not connect to kiosk slot.'));
     }
 
     function closeInsertModal() {
@@ -229,48 +238,32 @@ if (file_exists($statusFile)) {
         fetch('status.json?' + new Date().getTime())
             .then(res => res.json())
             .then(data => {
-                document.getElementById('adminTotalBottles').textContent = data.bottles || 0;
-                document.getElementById('adminActiveUsers').textContent = data.active ? "1 (Active)" : "0 (Idle)";
+                let clientIp = "<?php echo $client_ip; ?>";
+                if (data && data[clientIp]) {
+                    document.getElementById('adminTotalBottles').textContent = data[clientIp].bottles || 0;
+                    document.getElementById('adminActiveUsers').textContent = data[clientIp].active ? "Active Session" : "Idle Session";
+                }
             }).catch(e => {});
-        document.getElementById('adminTemp').textContent = "42.5 °C (Normal)";
     }
 
     function closeAdminDashboard() { document.getElementById('adminDashboardModal').style.display = 'none'; }
-
-    function resetAllUsersTime() {
-        if (confirm('Are you sure you want to wipe all session times?')) {
-            sessionSeconds = 0;
-            sessionEarnedBottles = 0;
-            updateInternetAccess(false);
-            fetch('reset_time.php')
-                .then(res => res.json())
-                .then(data => {
-                    alert('System reset successfully.');
-                    closeAdminDashboard();
-                    syncDatabaseStats();
-                }).catch(err => { alert('Error resetting time.'); });
-        }
-    }
 
     function syncDatabaseStats() {
         fetch('status.json?' + new Date().getTime())
             .then(res => res.json())
             .then(data => {
-                if (data && data.bottles !== undefined) {
-                    document.getElementById('modalBottleCount').textContent = data.bottles;
-                    document.getElementById('mainBottleCount').textContent = data.bottles;
+                let clientIp = "<?php echo $client_ip; ?>";
+                if (data && clientIp && data[clientIp]) {
+                    let userSession = data[clientIp];
+                    document.getElementById('modalBottleCount').textContent = userSession.bottles || 0;
+                    document.getElementById('mainBottleCount').textContent = userSession.bottles || 0;
+                    sessionSeconds = userSession.seconds || 0;
 
                     if (document.getElementById('insertModal').style.display === 'flex') {
-                        if (data.bottles > lastKnownBottles) {
+                        if (userSession.bottles > lastKnownBottles) {
                             timeLeft = 60; 
-                            lastKnownBottles = data.bottles; 
+                            lastKnownBottles = userSession.bottles; 
                         }
-                    }
-
-                    if (data.seconds !== undefined && data.bottles > sessionEarnedBottles) {
-                        let addedBottles = data.bottles - sessionEarnedBottles;
-                        sessionSeconds += addedBottles * 600; 
-                        sessionEarnedBottles = data.bottles;
                     }
                 }
             }).catch(err => {});
@@ -297,7 +290,9 @@ if (file_exists($statusFile)) {
         document.getElementById('ratesModal').style.display = 'none';
         document.getElementById('adminLoginModal').style.display = 'none';
         document.getElementById('adminDashboardModal').style.display = 'none';
-        updateBackendState(false);
+        
+        fetch('update_active.php?active=0').catch(e => {});
+
         syncDatabaseStats();
         startMainClock();
     };

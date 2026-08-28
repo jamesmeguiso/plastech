@@ -1,1 +1,1 @@
-{"bottles":2,"active":false,"seconds":1200,"metal_rejected":231,"client_ip":""}
+{"bottles": 0, "seconds": 0, "active": 0, "192.168.0.100": {"bottles": 2, "seconds": 0, "active": false, "metal_rejected": 0}, "192.168.0.151": {"bottles": 3, "seconds": 246, "active": false, "metal_rejected": 0}, "192.168.0.13": {"bottles": 11, "seconds": 6122, "active": false, "metal_rejected": 0}}

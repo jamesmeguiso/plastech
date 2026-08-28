@@ -9,12 +9,13 @@ if (!filter_var($ip, FILTER_VALIDATE_IP)) {
     exit;
 }
 
+// Replace wlan0 with your actual wireless AP interface name if different
+$interface = "end0"; 
+
 if ($auth === '1') {
-    // UNBLOCK: Insert allow rule at the very top (position 1) of the FORWARD chain
-    shell_exec("sudo iptables -C FORWARD -s $ip -j ACCEPT 2>/dev/null || sudo iptables -I FORWARD 1 -s $ip -j ACCEPT");
+    shell_exec("sudo iptables -C FORWARD -i $interface -s $ip -j ACCEPT 2>/dev/null || sudo iptables -I FORWARD 1 -i $interface -s $ip -j ACCEPT");
 } else {
-    // BLOCK: Remove the allow rules
-    shell_exec("sudo iptables -D FORWARD -s $ip -j ACCEPT 2>/dev/null");
+    shell_exec("sudo iptables -D FORWARD -i $interface -s $ip -j ACCEPT 2>/dev/null");
 }
 
 echo json_encode(["status" => "success", "ip" => $ip, "auth" => $auth]);
