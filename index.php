@@ -77,7 +77,6 @@ if (file_exists($statusFile)) {
         .rates-table th, .rates-table td { padding: 8px; border-bottom: 1px solid #dee2e6; }
         .rates-table th { background-color: #f8f9fa; color: #333; }
         .form-input { width: 100%; padding: 10px; margin: 6px 0 12px 0; border: 1px solid #ccc; border-radius: 5px; font-size: 14px; }
-        .admin-stat-box { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 6px; padding: 10px; margin-bottom: 10px; text-align: left; font-size: 12px; color: #333; }
     </style>
 </head>
 <body>
@@ -96,7 +95,7 @@ if (file_exists($statusFile)) {
         </div>
         <div class="tcc-footer">
             Talisay City College &copy; 2026<br>Plas-Tech Research Project<br>
-            <a href="javascript:void(0);" class="admin-link" onclick="openAdminLogin()">Admin Portal</a>
+            <a href="admin.php" class="admin-link">Admin Portal</a>
         </div>
     </div>
 
@@ -128,34 +127,11 @@ if (file_exists($statusFile)) {
         </div>
     </div>
 
-    <div id="adminLoginModal" class="modal-overlay">
-        <div class="modal-box">
-            <h3 style="margin-top: 0; color: #343a40;">🔐 Administrator Login</h3>
-            <input type="text" id="adminUser" class="form-input" placeholder="Username">
-            <input type="password" id="adminPass" class="form-input" placeholder="Password">
-            <button class="vende-btn btn-dark" style="margin-top: 5px; padding: 10px;" onclick="verifyAdminLogin()">Login</button>
-            <button class="vende-btn btn-red" style="padding: 10px; margin-bottom: 0;" onclick="closeAdminLogin()">Cancel</button>
-        </div>
-    </div>
-
-    <div id="adminDashboardModal" class="modal-overlay">
-        <div class="modal-box" style="max-width: 360px;">
-            <h3 style="margin-top: 0; color: #343a40;">⚙️ Admin Control Panel</h3>
-            <div class="admin-stat-box">
-                <div><strong>Your Session Status:</strong> <span id="adminActiveUsers" style="color: #007bff;">Loading...</span></div>
-                <div><strong>System Temperature:</strong> <span id="adminTemp" style="color: #28a745;">42.5 °C (Normal)</span></div>
-                <div><strong>Total Lifetime Bottles:</strong> <span id="adminTotalBottles">0</span></div>
-            </div>
-            <button class="vende-btn btn-dark" style="padding: 8px; font-size: 12px; margin-bottom: 0;" onclick="closeAdminDashboard()">Close Panel</button>
-        </div>
-    </div>
-
     <script>
     let modalInterval;
     let pollInterval;
     let mainTickerInterval;
     let sessionSeconds = 0;
-    let sessionEarnedBottles = 0;
     let timeLeft = 60;
     let lastKnownBottles = 0;
 
@@ -221,32 +197,6 @@ if (file_exists($statusFile)) {
 
     function openRatesModal() { document.getElementById('ratesModal').style.display = 'flex'; }
     function closeRatesModal() { document.getElementById('ratesModal').style.display = 'none'; }
-    function openAdminLogin() { document.getElementById('adminLoginModal').style.display = 'flex'; }
-    function closeAdminLogin() { document.getElementById('adminLoginModal').style.display = 'none'; }
-
-    function verifyAdminLogin() {
-        let u = document.getElementById('adminUser').value.trim();
-        let p = document.getElementById('adminPass').value.trim();
-        if (u === 'group5' && p === 'snire') {
-            closeAdminLogin();
-            openAdminDashboard();
-        } else { alert('Invalid credentials!'); }
-    }
-
-    function openAdminDashboard() {
-        document.getElementById('adminDashboardModal').style.display = 'flex';
-        fetch('status.json?' + new Date().getTime())
-            .then(res => res.json())
-            .then(data => {
-                let clientIp = "<?php echo $client_ip; ?>";
-                if (data && data[clientIp]) {
-                    document.getElementById('adminTotalBottles').textContent = data[clientIp].bottles || 0;
-                    document.getElementById('adminActiveUsers').textContent = data[clientIp].active ? "Active Session" : "Idle Session";
-                }
-            }).catch(e => {});
-    }
-
-    function closeAdminDashboard() { document.getElementById('adminDashboardModal').style.display = 'none'; }
 
     function syncDatabaseStats() {
         fetch('status.json?' + new Date().getTime())
@@ -288,8 +238,6 @@ if (file_exists($statusFile)) {
     window.onload = function() {
         document.getElementById('insertModal').style.display = 'none';
         document.getElementById('ratesModal').style.display = 'none';
-        document.getElementById('adminLoginModal').style.display = 'none';
-        document.getElementById('adminDashboardModal').style.display = 'none';
         
         fetch('update_active.php?active=0').catch(e => {});
 

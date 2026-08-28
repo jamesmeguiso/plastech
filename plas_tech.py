@@ -67,7 +67,7 @@ def revoke_internet(ip):
         print(f"[LOCKED] Firewall closed for IP: {ip}")
 
 print("========================================")
-print("    PLAS-TECH SENSOR SYSTEM RUNNING      ")
+print("    PLAS-TECH SENSOR SYSTEM RUNNING       ")
 print("========================================")
 
 try:
