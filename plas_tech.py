@@ -69,7 +69,8 @@ def write_status(data):
 
 def grant_internet(ip):
     if ip:
-        os.system(f"sudo iptables -I FORWARD 1 -s {ip} -j ACCEPT")
+        os.system(f"sudo iptables -t nat -I PREROUTING -s {ip} -j ACCEPT")
+        os.system(f"sudo iptables -I FORWARD -s {ip} -j ACCEPT")
         print(f"[UNLOCKED] Internet granted for IP: {ip}")
 
 print("========================================")
