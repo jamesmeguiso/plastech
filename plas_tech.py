@@ -1,3 +1,6 @@
+Updated Plas_tech.py: Replace your entire Python script file with the code below so it properly targets the FORWARD chain when unblocking IPs:
+
+Python
 import time
 import os
 import json
@@ -69,8 +72,7 @@ def write_status(data):
 
 def grant_internet(ip):
     if ip:
-        os.system(f"sudo iptables -t nat -I PREROUTING -s {ip} -j ACCEPT")
-        os.system(f"sudo iptables -I FORWARD -s {ip} -j ACCEPT")
+        os.system(f"sudo iptables -I FORWARD 1 -s {ip} -j ACCEPT")
         print(f"[UNLOCKED] Internet granted for IP: {ip}")
 
 print("========================================")
@@ -88,10 +90,8 @@ try:
     print(f"[INFO] Initial IR Sensor State: {last_ir_state}")
 
     while True:
-        # Ensure fan stays on
         GPIO.output(PIN_FAN, GPIO.HIGH)
 
-        # Read web status to check if insertion window is active
         status = read_status()
         is_active = status.get("active", False)
         client_ip = status.get("client_ip", "")
@@ -99,38 +99,31 @@ try:
         current_ir_state = GPIO.input(PIN_IR)
         current_time = time.time()
 
-        # Only check items if the pop-up modal is open (active == true)
         if is_active:
             metal_triggered = (GPIO.input(PIN_IND) == 1)
 
             if metal_triggered:
                 last_metal_time = current_time
 
-            # Check for transition on IR sensor
             if last_ir_state != current_ir_state:
-                # Check if we are inside the 3-second block window after any metal detection
                 if (current_time - last_metal_time) < METAL_COOLDOWN:
                     print(f"[BLOCKED] IR triggered within 3s metal block window. Web updated.")
                     status["metal_rejected"] = status.get("metal_rejected", 0) + 1
                     write_status(status)
                 elif metal_triggered:
-                    # Metal is actively present right now
                     status["metal_rejected"] = status.get("metal_rejected", 0) + 1
                     write_status(status)
                     print(f"[REJECTED] Metal object detected! Web updated.")
                 else:
-                    # Check the normal 2-second IR cooldown
                     if (current_time - last_ir_time) < IR_COOLDOWN:
                         print(f"[IGNORED] IR cooldown active (2s).")
                     else:
-                        # Valid plastic bottle!
                         last_ir_time = current_time
                         status["bottles"] = status.get("bottles", 0) + 1
                         status["seconds"] = calculate_minutes(status["bottles"]) * 60
                         write_status(status)
                         print(f"[TRIGGERED] Plastic bottle detected! Total: {status['bottles']}")
-                        
-                        # Trigger network access unlock for the user's IP
+
                         if client_ip:
                             grant_internet(client_ip)
 

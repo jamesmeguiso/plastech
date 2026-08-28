@@ -10,13 +10,11 @@ if (!filter_var($ip, FILTER_VALIDATE_IP)) {
 }
 
 if ($auth === '1') {
-    // UNBLOCK: Ensure the IP is allowed to forward traffic through the gateway
-    shell_exec("sudo iptables -C FORWARD -s $ip -j ACCEPT 2>/dev/null || sudo iptables -A FORWARD -s $ip -j ACCEPT");
-    shell_exec("sudo iptables -C FORWARD -d $ip -j ACCEPT 2>/dev/null || sudo iptables -A FORWARD -d $ip -j ACCEPT");
+    // UNBLOCK: Insert allow rule at the very top (position 1) of the FORWARD chain
+    shell_exec("sudo iptables -C FORWARD -s $ip -j ACCEPT 2>/dev/null || sudo iptables -I FORWARD 1 -s $ip -j ACCEPT");
 } else {
-    // BLOCK: Remove the allow rules so traffic stops flowing
+    // BLOCK: Remove the allow rules
     shell_exec("sudo iptables -D FORWARD -s $ip -j ACCEPT 2>/dev/null");
-    shell_exec("sudo iptables -D FORWARD -d $ip -j ACCEPT 2>/dev/null");
 }
 
 echo json_encode(["status" => "success", "ip" => $ip, "auth" => $auth]);

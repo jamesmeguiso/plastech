@@ -99,7 +99,6 @@ if (file_exists($statusFile)) {
         </div>
     </div>
 
-    <!-- Active Window Popup for Bottle Insertion -->
     <div id="insertModal" class="modal-overlay">
         <div class="modal-box">
             <h3 style="margin-top: 0; color: #333;">Drop Bottles In Slot</h3>
@@ -111,7 +110,6 @@ if (file_exists($statusFile)) {
         </div>
     </div>
 
-    <!-- Rates Popup Modal Window -->
     <div id="ratesModal" class="modal-overlay">
         <div class="modal-box">
             <h3 style="margin-top: 0; color: #007bff;">♻️ System Rates & Conversion</h3>
@@ -129,7 +127,6 @@ if (file_exists($statusFile)) {
         </div>
     </div>
 
-    <!-- Admin Login Modal -->
     <div id="adminLoginModal" class="modal-overlay">
         <div class="modal-box">
             <h3 style="margin-top: 0; color: #343a40;">🔐 Administrator Login</h3>
@@ -140,7 +137,6 @@ if (file_exists($statusFile)) {
         </div>
     </div>
 
-    <!-- Admin Dashboard Modal -->
     <div id="adminDashboardModal" class="modal-overlay">
         <div class="modal-box" style="max-width: 360px;">
             <h3 style="margin-top: 0; color: #343a40;">⚙️ Admin Control Panel</h3>
@@ -168,7 +164,9 @@ if (file_exists($statusFile)) {
     }
 
     function updateInternetAccess(isAuthorized) {
-        let clientIp = "<?php echo $_SERVER['REMOTE_ADDR'] ?? '192.168.4.15'; ?>";
+        let clientIp = "<?php echo $_SERVER['REMOTE_ADDR'] ?? ''; ?>";
+        if (!clientIp) return;
+
         fetch('authorize_net.php?ip=' + clientIp + '&auth=' + (isAuthorized ? '1' : '0')).catch(e => {});
         let banner = document.getElementById('statusBanner');
         if (isAuthorized) {
@@ -186,7 +184,6 @@ if (file_exists($statusFile)) {
         document.getElementById('modalTimerDisplay').textContent = timeLeft + " SEC";
         updateBackendState(true);
 
-        // Fetch baseline bottle count when modal opens
         fetch('status.json?' + new Date().getTime())
             .then(res => res.json())
             .then(data => { lastKnownBottles = data.bottles || 0; }).catch(e => {});
@@ -263,11 +260,10 @@ if (file_exists($statusFile)) {
                     document.getElementById('modalBottleCount').textContent = data.bottles;
                     document.getElementById('mainBottleCount').textContent = data.bottles;
 
-                    // Instantly reset timer back to 60 seconds right after a valid bottle count updates
                     if (document.getElementById('insertModal').style.display === 'flex') {
                         if (data.bottles > lastKnownBottles) {
-                            timeLeft = 60; // Reset timer instantly
-                            lastKnownBottles = data.bottles; // Update baseline
+                            timeLeft = 60; 
+                            lastKnownBottles = data.bottles; 
                         }
                     }
 
