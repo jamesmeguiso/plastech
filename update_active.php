@@ -41,7 +41,7 @@ $data[$client_ip]['active'] = ($active === 1);
 $tempFile = "status_temp.json";
 file_put_contents($tempFile, json_encode($data));
 rename($tempFile, $statusFile);
-chmod($statusFile, 0777); // Forces file to remain writable for Python
+chmod($statusFile, 0777);
 
 echo json_encode([
     "success" => true, 

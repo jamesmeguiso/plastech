@@ -43,6 +43,7 @@ if ($is_logged) {
                 foreach ($data as $ip_address => $val) {
                     if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
                         @shell_exec("sudo iptables -D FORWARD -i end0 -s " . escapeshellarg($ip_address) . " -j ACCEPT 2>/dev/null");
+                        @shell_exec("sudo conntrack -D -s " . escapeshellarg($ip_address) . " 2>/dev/null");
                     }
                 }
             }
@@ -59,6 +60,7 @@ if ($is_logged) {
             if (is_array($data) && isset($data[$target_ip])) {
                 unset($data[$target_ip]);
                 @shell_exec("sudo iptables -D FORWARD -i end0 -s " . escapeshellarg($target_ip) . " -j ACCEPT 2>/dev/null");
+                @shell_exec("sudo conntrack -D -s " . escapeshellarg($target_ip) . " 2>/dev/null");
                 file_put_contents($status_file, json_encode($data));
             }
         }
@@ -163,7 +165,7 @@ if (file_exists($status_file)) {
                         <td>
                             <form method="POST" style="margin: 0;" onsubmit="return confirm('Reset session for IP: <?php echo htmlspecialchars($ip); ?>?');">
                                 <input type="hidden" name="target_ip" value="<?php echo htmlspecialchars($ip); ?>">
-                                <button type="submit" name="reset_ip" class="vend-btn btn-red btn-sm">Reset IP</button>
+                                <button type="submit" name="reset_ip" class="vende-btn btn-red btn-sm">Reset IP</button>
                             </form>
                         </td>
                     </tr>

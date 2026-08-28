@@ -64,7 +64,8 @@ def revoke_internet(ip):
     if ip:
         while os.system(f"sudo iptables -D FORWARD -i end0 -s {ip} -j ACCEPT 2>/dev/null") == 0:
             pass
-        print(f"[LOCKED] Firewall closed for IP: {ip}")
+        os.system(f"sudo conntrack -D -s {ip} 2>/dev/null")
+        print(f"[LOCKED] Firewall closed and connections purged for IP: {ip}")
 
 print("========================================")
 print("    PLAS-TECH SENSOR SYSTEM RUNNING       ")
