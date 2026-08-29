@@ -46,8 +46,6 @@ def get_cpu_temp_c():
         return None
 
 def update_fan_state(current_fan_state):
-    # Relay is active-low: GPIO.LOW = fan ON, GPIO.HIGH = fan OFF
-    # Hysteresis: ON at FAN_ON_TEMP_C, OFF at FAN_OFF_TEMP_C, to avoid rapid cycling
     temp = get_cpu_temp_c()
     if temp is None:
         return current_fan_state
@@ -78,7 +76,6 @@ def revoke_internet(ip):
         print(f"[LOCKED] Firewall closed for IP: {ip}")
 
 def read_status_locked(lock_handle):
-    """Read status.json while already holding the lock."""
     if not os.path.exists(STATUS_FILE):
         return {}
     try:
@@ -89,7 +86,6 @@ def read_status_locked(lock_handle):
         return {}
 
 def write_status_locked(data):
-    """Write status.json while already holding the lock."""
     try:
         if not os.path.exists(STATUS_DIR):
             os.makedirs(STATUS_DIR, exist_ok=True)
@@ -128,42 +124,50 @@ try:
         counter += 1
         if counter >= 20:
             counter = 0
-            for ip, session_data in status_data.items():
+            for token, session_data in status_data.items():
                 if isinstance(session_data, dict):
+                    ip = session_data.get("current_ip")
                     if session_data.get("seconds", 0) > 0:
                         session_data["seconds"] -= 1
                         grant_internet(ip)
                         if session_data["seconds"] <= 0:
                             session_data["seconds"] = 0
                             revoke_internet(ip)
-                            print(f"[LOCKED] Time expired for IP {ip}")
+                            print(f"[LOCKED] Time expired for token {token} (ip {ip})")
 
+        active_token = None
         active_ip = None
-        for ip, session_data in status_data.items():
+        for token, session_data in status_data.items():
             if isinstance(session_data, dict) and session_data.get("active", False):
-                active_ip = ip
+                active_token = token
+                active_ip = session_data.get("current_ip")
                 break
 
-        if active_ip:
+        if active_token:
             metal_triggered = (GPIO.input(PIN_IND) == 1)
             if metal_triggered:
                 last_metal_time = current_time
 
             if last_ir_state != current_ir_state:
                 if (current_time - last_metal_time) < METAL_COOLDOWN:
-                    if active_ip in status_data and isinstance(status_data[active_ip], dict):
-                        status_data[active_ip]["metal_rejected"] = status_data[active_ip].get("metal_rejected", 0) + 1
+                    status_data[active_token]["metal_rejected"] = status_data[active_token].get("metal_rejected", 0) + 1
                 elif metal_triggered:
-                    if active_ip in status_data and isinstance(status_data[active_ip], dict):
-                        status_data[active_ip]["metal_rejected"] = status_data[active_ip].get("metal_rejected", 0) + 1
+                    status_data[active_token]["metal_rejected"] = status_data[active_token].get("metal_rejected", 0) + 1
                 else:
                     if (current_time - last_ir_time) >= IR_COOLDOWN:
                         last_ir_time = current_time
-                        if active_ip in status_data and isinstance(status_data[active_ip], dict):
-                            status_data[active_ip]["bottles"] = status_data[active_ip].get("bottles", 0) + 1
-                            status_data[active_ip]["seconds"] = calculate_minutes(status_data[active_ip]["bottles"]) * 60
-                            grant_internet(active_ip)
-                            print(f"[TRIGGERED] Bottle added for IP {active_ip}. Total: {status_data[active_ip]['bottles']}")
+
+                        status_data[active_token]["bottles"] = status_data[active_token].get("bottles", 0) + 1
+                        status_data[active_token]["session_bottles"] = status_data[active_token].get("session_bottles", 0) + 1
+
+                        base_seconds = status_data[active_token].get("base_seconds", 0)
+                        session_bottles = status_data[active_token]["session_bottles"]
+                        status_data[active_token]["seconds"] = base_seconds + calculate_minutes(session_bottles) * 60
+
+                        grant_internet(active_ip)
+                        print(f"[TRIGGERED] Bottle added for token {active_token} (ip {active_ip}). "
+                              f"Session bottles: {session_bottles}, Lifetime: {status_data[active_token]['bottles']}, "
+                              f"Seconds now: {status_data[active_token]['seconds']}")
 
         write_status_locked(status_data)
 

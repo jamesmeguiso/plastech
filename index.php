@@ -1,12 +1,24 @@
 <?php
 $statusFile = "status.json";
-$client_ip = $_SERVER['REMOTE_ADDR'] ?? '';
-$bottleCount = 0;
 
+// Persistent device identity via cookie — survives MAC randomization and DHCP re-leases
+if (!isset($_COOKIE['ptid']) || !preg_match('/^[a-f0-9]{32}$/', $_COOKIE['ptid'])) {
+    $device_token = bin2hex(random_bytes(16));
+    setcookie('ptid', $device_token, [
+        'expires'  => time() + 60 * 60 * 24 * 365,
+        'path'     => '/',
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
+} else {
+    $device_token = $_COOKIE['ptid'];
+}
+
+$bottleCount = 0;
 if (file_exists($statusFile)) {
     $data = json_decode(file_get_contents($statusFile), true);
-    if (is_array($data) && isset($data[$client_ip]) && isset($data[$client_ip]['bottles'])) {
-        $bottleCount = $data[$client_ip]['bottles'];
+    if (is_array($data) && isset($data[$device_token]['bottles'])) {
+        $bottleCount = $data[$device_token]['bottles'];
     }
 }
 ?>
@@ -133,7 +145,8 @@ if (file_exists($statusFile)) {
     let mainTickerInterval;
     let sessionSeconds = 0;
     let timeLeft = 60;
-    let lastKnownBottles = 0;
+    let lastKnownBottles = 0; // tracks THIS SESSION's bottle count, not lifetime total
+    let deviceToken = "<?php echo $device_token; ?>";
 
     function updateBackendState(isActive) {
         fetch('update_active.php?active=' + (isActive ? '1' : '0')).catch(e => {});
@@ -162,14 +175,8 @@ if (file_exists($statusFile)) {
                 timeLeft = 60; 
                 document.getElementById('modalTimerDisplay').textContent = timeLeft + " SEC";
 
-                fetch('status.json?' + new Date().getTime())
-                    .then(res => res.json())
-                    .then(resData => {
-                        let clientIp = "<?php echo $client_ip; ?>";
-                        if (resData && resData[clientIp]) {
-                            lastKnownBottles = resData[clientIp].bottles || 0;
-                        }
-                    }).catch(e => {});
+                lastKnownBottles = data.session_bottles || 0;
+                document.getElementById('modalBottleCount').textContent = lastKnownBottles;
 
                 clearInterval(modalInterval);
                 modalInterval = setInterval(() => {
@@ -202,17 +209,18 @@ if (file_exists($statusFile)) {
         fetch('status.json?' + new Date().getTime())
             .then(res => res.json())
             .then(data => {
-                let clientIp = "<?php echo $client_ip; ?>";
-                if (data && clientIp && data[clientIp]) {
-                    let userSession = data[clientIp];
-                    document.getElementById('modalBottleCount').textContent = userSession.bottles || 0;
+                if (data && deviceToken && data[deviceToken]) {
+                    let userSession = data[deviceToken];
+                    let sessionBottles = userSession.session_bottles || 0;
+
+                    document.getElementById('modalBottleCount').textContent = sessionBottles;
                     document.getElementById('mainBottleCount').textContent = userSession.bottles || 0;
                     sessionSeconds = userSession.seconds || 0;
 
                     if (document.getElementById('insertModal').style.display === 'flex') {
-                        if (userSession.bottles > lastKnownBottles) {
+                        if (sessionBottles > lastKnownBottles) {
                             timeLeft = 60; 
-                            lastKnownBottles = userSession.bottles; 
+                            lastKnownBottles = sessionBottles; 
                         }
                     }
                 }

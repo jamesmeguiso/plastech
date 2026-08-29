@@ -4,6 +4,7 @@ error_reporting(E_ALL);
 ini_set('display_errors', 0);
 
 $status_file = 'status.json';
+$lock_file = 'status.lock';
 $auth_error = '';
 
 if (!file_exists($status_file)) {
@@ -37,31 +38,49 @@ $is_logged = isset($_SESSION['admin_logged_in']) && $_SESSION['admin_logged_in']
 
 if ($is_logged) {
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_all'])) {
-        if (file_exists($status_file)) {
-            $data = json_decode(file_get_contents($status_file), true);
-            if (is_array($data)) {
-                foreach ($data as $ip_address => $val) {
-                    if (filter_var($ip_address, FILTER_VALIDATE_IP)) {
-                        @shell_exec("sudo iptables -D FORWARD -i end0 -s " . escapeshellarg($ip_address) . " -j ACCEPT 2>/dev/null");
-                        @shell_exec("sudo conntrack -D -s " . escapeshellarg($ip_address) . " 2>/dev/null");
+        $lockHandle = fopen($lock_file, 'c');
+        if ($lockHandle !== false) {
+            flock($lockHandle, LOCK_EX);
+            if (file_exists($status_file)) {
+                $data = json_decode(file_get_contents($status_file), true);
+                if (is_array($data)) {
+                    foreach ($data as $token => $val) {
+                        $ip = is_array($val) ? ($val['current_ip'] ?? null) : null;
+                        if ($ip) {
+                            @shell_exec("sudo iptables -D FORWARD -i end0 -s " . escapeshellarg($ip) . " -j ACCEPT 2>/dev/null");
+                            @shell_exec("sudo conntrack -D -s " . escapeshellarg($ip) . " 2>/dev/null");
+                        }
                     }
                 }
             }
+            file_put_contents($status_file, json_encode([]));
+            flock($lockHandle, LOCK_UN);
+            fclose($lockHandle);
         }
-        file_put_contents($status_file, json_encode([]));
         header("Location: admin.php");
         exit();
     }
 
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_ip'])) {
-        $target_ip = $_POST['target_ip'] ?? '';
-        if (filter_var($target_ip, FILTER_VALIDATE_IP) && file_exists($status_file)) {
-            $data = json_decode(file_get_contents($status_file), true);
-            if (is_array($data) && isset($data[$target_ip])) {
-                unset($data[$target_ip]);
-                @shell_exec("sudo iptables -D FORWARD -i end0 -s " . escapeshellarg($target_ip) . " -j ACCEPT 2>/dev/null");
-                @shell_exec("sudo conntrack -D -s " . escapeshellarg($target_ip) . " 2>/dev/null");
-                file_put_contents($status_file, json_encode($data));
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['reset_token'])) {
+        $target_token = $_POST['target_token'] ?? '';
+        if ($target_token !== '') {
+            $lockHandle = fopen($lock_file, 'c');
+            if ($lockHandle !== false) {
+                flock($lockHandle, LOCK_EX);
+                if (file_exists($status_file)) {
+                    $data = json_decode(file_get_contents($status_file), true);
+                    if (is_array($data) && isset($data[$target_token])) {
+                        $ip = $data[$target_token]['current_ip'] ?? null;
+                        unset($data[$target_token]);
+                        if ($ip) {
+                            @shell_exec("sudo iptables -D FORWARD -i end0 -s " . escapeshellarg($ip) . " -j ACCEPT 2>/dev/null");
+                            @shell_exec("sudo conntrack -D -s " . escapeshellarg($ip) . " 2>/dev/null");
+                        }
+                        file_put_contents($status_file, json_encode($data));
+                    }
+                }
+                flock($lockHandle, LOCK_UN);
+                fclose($lockHandle);
             }
         }
         header("Location: admin.php");
@@ -85,7 +104,7 @@ if (file_exists($status_file)) {
     <title>PlasTech - Admin Dashboard</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #fff; padding: 20px; margin: 0; }
-        .container { max-width: 700px; margin: 30px auto; background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
+        .container { max-width: 800px; margin: 30px auto; background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.4); }
         h1 { color: #38bdf8; margin-top: 0; font-size: 22px; text-align: center; }
         p { text-align: center; color: #94a3b8; font-size: 13px; }
         .form-input { width: 100%; padding: 10px; margin: 8px 0 14px 0; border: 1px solid #334155; background: #0f172a; color: #fff; border-radius: 6px; font-size: 14px; box-sizing: border-box; }
@@ -98,6 +117,7 @@ if (file_exists($status_file)) {
         .ip-table { width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }
         .ip-table th, .ip-table td { padding: 10px; border-bottom: 1px solid #334155; }
         .ip-table th { background-color: #0f172a; color: #38bdf8; }
+        .token-cell { font-family: monospace; font-size: 11px; color: #94a3b8; }
         .badge-active { background: #065f46; color: #34d399; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
         .badge-idle { background: #1e293b; color: #94a3b8; padding: 3px 6px; border-radius: 4px; font-size: 11px; }
         .top-bar { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 12px; margin-bottom: 15px; }
@@ -109,7 +129,7 @@ if (file_exists($status_file)) {
 <div class="container">
     <?php if (!$is_logged): ?>
         <h1>🔐 Admin Portal Login</h1>
-        <p>Enter administrator credentials to manage client IPs.</p>
+        <p>Enter administrator credentials to manage client sessions.</p>
         <?php if (!empty($auth_error)): ?>
             <div class="error-msg"><?php echo htmlspecialchars($auth_error); ?></div>
         <?php endif; ?>
@@ -126,13 +146,14 @@ if (file_exists($status_file)) {
             <h1 style="margin: 0; text-align: left;">⚙️ Admin Control Panel</h1>
             <a href="admin.php?logout=1" class="back-link" style="color: #f87171;">Logout Admin</a>
         </div>
-        <p style="text-align: left;">Manage active sessions, client IP states, and perform resets.</p>
+        <p style="text-align: left;">Manage active sessions, device states, and perform resets.</p>
 
         <div class="table-container">
             <table class="ip-table">
                 <thead>
                     <tr>
-                        <th>Client IP Address</th>
+                        <th>Device Token</th>
+                        <th>Current IP</th>
                         <th>Bottles</th>
                         <th>Time Left</th>
                         <th>Status</th>
@@ -141,18 +162,21 @@ if (file_exists($status_file)) {
                 </thead>
                 <tbody>
                     <?php 
-                    $has_ips = false;
-                    foreach ($sessions_data as $ip => $info):
-                        if (!filter_var($ip, FILTER_VALIDATE_IP)) continue;
-                        $has_ips = true;
+                    $has_sessions = false;
+                    foreach ($sessions_data as $token => $info):
+                        if (!is_array($info)) continue;
+                        $has_sessions = true;
                         $bottles = $info['bottles'] ?? 0;
                         $seconds = $info['seconds'] ?? 0;
+                        $ip = $info['current_ip'] ?? '—';
                         $is_active = !empty($info['active']);
                         $mins = floor($seconds / 60);
                         $secs = $seconds % 60;
+                        $short_token = substr($token, 0, 10) . '…';
                     ?>
                     <tr>
-                        <td><strong><?php echo htmlspecialchars($ip); ?></strong></td>
+                        <td class="token-cell" title="<?php echo htmlspecialchars($token); ?>"><?php echo htmlspecialchars($short_token); ?></td>
+                        <td><?php echo htmlspecialchars($ip); ?></td>
                         <td><?php echo (int)$bottles; ?></td>
                         <td><?php echo "{$mins}m {$secs}s"; ?></td>
                         <td>
@@ -163,25 +187,25 @@ if (file_exists($status_file)) {
                             <?php endif; ?>
                         </td>
                         <td>
-                            <form method="POST" style="margin: 0;" onsubmit="return confirm('Reset session for IP: <?php echo htmlspecialchars($ip); ?>?');">
-                                <input type="hidden" name="target_ip" value="<?php echo htmlspecialchars($ip); ?>">
-                                <button type="submit" name="reset_ip" class="vend-btn btn-red btn-sm">Reset IP</button>
+                            <form method="POST" style="margin: 0;" onsubmit="return confirm('Reset session for this device?');">
+                                <input type="hidden" name="target_token" value="<?php echo htmlspecialchars($token); ?>">
+                                <button type="submit" name="reset_token" class="vende-btn btn-red btn-sm">Reset</button>
                             </form>
                         </td>
                     </tr>
                     <?php endforeach; ?>
-                    <?php if (!$has_ips): ?>
+                    <?php if (!$has_sessions): ?>
                     <tr>
-                        <td colspan="5" style="text-align: center; color: #64748b; padding: 20px;">No client IP sessions recorded yet.</td>
+                        <td colspan="6" style="text-align: center; color: #64748b; padding: 20px;">No device sessions recorded yet.</td>
                     </tr>
                     <?php endif; ?>
                 </tbody>
             </table>
         </div>
 
-        <?php if ($has_ips): ?>
-        <form method="POST" onsubmit="return confirm('Reset ALL connected client IP sessions?');" style="margin-top: 15px;">
-            <button type="submit" name="reset_all" class="vende-btn btn-red">Reset All Connected IPs</button>
+        <?php if ($has_sessions): ?>
+        <form method="POST" onsubmit="return confirm('Reset ALL connected device sessions?');" style="margin-top: 15px;">
+            <button type="submit" name="reset_all" class="vende-btn btn-red">Reset All Connected Devices</button>
         </form>
         <?php endif; ?>
 
