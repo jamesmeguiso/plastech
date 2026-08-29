@@ -165,7 +165,7 @@ if (file_exists($status_file)) {
                         <td>
                             <form method="POST" style="margin: 0;" onsubmit="return confirm('Reset session for IP: <?php echo htmlspecialchars($ip); ?>?');">
                                 <input type="hidden" name="target_ip" value="<?php echo htmlspecialchars($ip); ?>">
-                                <button type="submit" name="reset_ip" class="vende-btn btn-red btn-sm">Reset IP</button>
+                                <button type="submit" name="reset_ip" class="vend-btn btn-red btn-sm">Reset IP</button>
                             </form>
                         </td>
                     </tr>

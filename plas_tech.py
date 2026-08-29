@@ -1,6 +1,7 @@
 import time
 import os
 import json
+import fcntl
 import OPi.GPIO as GPIO
 
 GPIO.setmode(GPIO.BOARD)
@@ -13,13 +14,16 @@ PIN_FAN = 11
 GPIO.setup(PIN_IR, GPIO.IN)
 GPIO.setup(PIN_IND, GPIO.IN)
 GPIO.setup(PIN_FAN, GPIO.OUT)
-GPIO.output(PIN_FAN, GPIO.HIGH)
+GPIO.output(PIN_FAN, GPIO.HIGH)  # Fan starts OFF (relay is active-low)
 
 STATUS_DIR = "/var/www/html/plastech"
 STATUS_FILE = os.path.join(STATUS_DIR, "status.json")
+LOCK_FILE = os.path.join(STATUS_DIR, "status.lock")
 
-last_ir_time = 0
-last_metal_time = 0
+THERMAL_ZONE = "/sys/class/thermal/thermal_zone0/temp"
+FAN_ON_TEMP_C = 29.0
+FAN_OFF_TEMP_C = 25.0
+
 IR_COOLDOWN = 2.0
 METAL_COOLDOWN = 3.0
 
@@ -32,7 +36,49 @@ def calculate_minutes(bottles):
     if bottles == 10: return 180
     return bottles * 10
 
-def read_status():
+def get_cpu_temp_c():
+    try:
+        with open(THERMAL_ZONE, "r") as f:
+            raw = f.read().strip()
+        return int(raw) / 1000.0
+    except Exception as e:
+        print(f"[ERROR] Could not read CPU temp: {e}")
+        return None
+
+def update_fan_state(current_fan_state):
+    # Relay is active-low: GPIO.LOW = fan ON, GPIO.HIGH = fan OFF
+    # Hysteresis: ON at FAN_ON_TEMP_C, OFF at FAN_OFF_TEMP_C, to avoid rapid cycling
+    temp = get_cpu_temp_c()
+    if temp is None:
+        return current_fan_state
+
+    if temp >= FAN_ON_TEMP_C and not current_fan_state:
+        GPIO.output(PIN_FAN, GPIO.LOW)
+        print(f"[FAN] ON at {temp:.1f}C")
+        return True
+    elif temp <= FAN_OFF_TEMP_C and current_fan_state:
+        GPIO.output(PIN_FAN, GPIO.HIGH)
+        print(f"[FAN] OFF at {temp:.1f}C")
+        return False
+
+    return current_fan_state
+
+def grant_internet(ip):
+    if ip:
+        check_cmd = f"iptables -C FORWARD -i end0 -s {ip} -j ACCEPT 2>/dev/null"
+        if os.system(check_cmd) != 0:
+            os.system(f"iptables -I FORWARD 1 -i end0 -s {ip} -j ACCEPT")
+            print(f"[UNLOCKED] Firewall opened for IP: {ip}")
+
+def revoke_internet(ip):
+    if ip:
+        while os.system(f"iptables -D FORWARD -i end0 -s {ip} -j ACCEPT 2>/dev/null") == 0:
+            pass
+        os.system(f"conntrack -D -s {ip} 2>/dev/null")
+        print(f"[LOCKED] Firewall closed for IP: {ip}")
+
+def read_status_locked(lock_handle):
+    """Read status.json while already holding the lock."""
     if not os.path.exists(STATUS_FILE):
         return {}
     try:
@@ -42,30 +88,16 @@ def read_status():
     except Exception:
         return {}
 
-def write_status(data):
+def write_status_locked(data):
+    """Write status.json while already holding the lock."""
     try:
         if not os.path.exists(STATUS_DIR):
             os.makedirs(STATUS_DIR, exist_ok=True)
-
         with open(STATUS_FILE, "w") as f:
             json.dump(data, f)
         os.chmod(STATUS_FILE, 0o777)
     except Exception as e:
         print(f"[ERROR] Could not write status: {e}")
-
-def grant_internet(ip):
-    if ip:
-        check_cmd = f"sudo iptables -C FORWARD -i end0 -s {ip} -j ACCEPT 2>/dev/null"
-        if os.system(check_cmd) != 0:
-            os.system(f"sudo iptables -I FORWARD 1 -i end0 -s {ip} -j ACCEPT")
-            print(f"[UNLOCKED] Firewall opened for IP: {ip}")
-
-def revoke_internet(ip):
-    if ip:
-        while os.system(f"sudo iptables -D FORWARD -i end0 -s {ip} -j ACCEPT 2>/dev/null") == 0:
-            pass
-        os.system(f"sudo conntrack -D -s {ip} 2>/dev/null")
-        print(f"[LOCKED] Firewall closed and connections purged for IP: {ip}")
 
 print("========================================")
 print("    PLAS-TECH SENSOR SYSTEM RUNNING       ")
@@ -74,12 +106,24 @@ print("========================================")
 try:
     last_ir_state = GPIO.input(PIN_IR)
     counter = 0
+    fan_state = False
+    temp_check_counter = 0
+    last_ir_time = 0
+    last_metal_time = 0
 
     while True:
-        GPIO.output(PIN_FAN, GPIO.HIGH)
-        status_data = read_status()
         current_time = time.time()
         current_ir_state = GPIO.input(PIN_IR)
+
+        temp_check_counter += 1
+        if temp_check_counter >= 20:
+            temp_check_counter = 0
+            fan_state = update_fan_state(fan_state)
+
+        lock_fd = open(LOCK_FILE, "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        status_data = read_status_locked(lock_fd)
 
         counter += 1
         if counter >= 20:
@@ -121,9 +165,14 @@ try:
                             grant_internet(active_ip)
                             print(f"[TRIGGERED] Bottle added for IP {active_ip}. Total: {status_data[active_ip]['bottles']}")
 
-        write_status(status_data)
+        write_status_locked(status_data)
+
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
+
         last_ir_state = current_ir_state
         time.sleep(0.05)
 
 except KeyboardInterrupt:
+    GPIO.output(PIN_FAN, GPIO.HIGH)
     GPIO.cleanup()
